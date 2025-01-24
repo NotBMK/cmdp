@@ -1,4 +1,5 @@
-#pragma once
+#ifndef NTL__CMDP__H
+#define NTL__CMDP__H
 
 #include <string>
 #include <vector>
@@ -52,7 +53,7 @@ constexpr size_t get_max_index()
     return maxi;
 }
 
-template <typename _Char, typename _Char_to_Index, size_t _Max_index = get_max_index<_Char, _Char_to_Index>() + 1>
+template <typename _Char, typename _Char_to_Index, size_t _Index_Count = get_max_index<_Char, _Char_to_Index>() + 1>
 class basic_cmd_parser
 {
 protected:
@@ -61,6 +62,7 @@ protected:
     using ctoi_t    = _Char_to_Index;
     using f_noarg_t = void(*)();
     using lpctstr_t = const _Char *;
+    using string_t  = std::basic_string<_Char>;
 
     struct handler_t
     {
@@ -124,7 +126,7 @@ protected:
             this->call = nullptr;
             this->what = nullptr;
 
-            for (size_t i = 0; i < _Max_index; ++i)
+            for (size_t i = 0; i < _Index_Count; ++i)
             {
                 this->next[i] = nullptr;
             }
@@ -132,7 +134,7 @@ protected:
 
         virtual ~Node()
         {
-            for (size_t i = 0; i < _Max_index; ++i)
+            for (size_t i = 0; i < _Index_Count; ++i)
             {
                 if (this->next[i])
                 {
@@ -145,6 +147,7 @@ protected:
         {
             switch (this->type)
             {
+                
             case Node::CALLBACK:
                 if (call && !*res)
                 {
@@ -160,21 +163,18 @@ protected:
                     return true;
                 }
                 break;
-            
-            default:
-                return false;
             }
             return false;
         }
 
-        Type            type;
-        Node*           next[_Max_index];
+        Type                type;
+        Node*               next[_Index_Count];
         union
         {
-            callback_t* call;
-            handler_t*  handle;
+            callback_t*     call;
+            handler_t*      handle;
         };
-        lpctstr_t        what;
+        lpctstr_t           what;
     };
 
 private:
@@ -298,14 +298,14 @@ public:
      */
     void parse(lpctstr_t str)
     {
-        if (*str != '-' && _M_default_handler)
+        Node* node;
+        lpctstr_t res = _M_walk(str, &node);
+        if (node == _M_root)
         {
             _M_default_handler->handle(str);
             return;
         }
-        Node* node;
-        lpctstr_t res = _M_walk(str, &node);
-        if(!node->on_match(str, res))
+        if (!node->on_match(str, res))
         {
             char buf[256];
             if (recent())
@@ -412,6 +412,8 @@ protected:
 // command option parser
 typedef basic_cmd_parser<char, char_hash_ignore_case<char>> cmdp;
 
-} // ! cmd
+} // cmd
 
-} // ! parse
+} // ntl
+
+#endif
