@@ -3,34 +3,37 @@ An easy command option parser
 
 # usage
 
-
-Add
-```cpp
-#include "cmdp.h"
-```
-to your cpp file.
-
-regist your option and call 'parse(argc, argv)'
-
 ## cmdp.add
-This function bind a 'void(*)()' function to an option.
+This function bind a callback function without argument and return to an option.
 ```cpp
-#include <iostream>
-int main(int argc, char const* argv[])
-{
-    ntl::cmd::cmdp cmdp;
-    cmdp.add("-test", [](){ std::cout << "cmdp test"; });
+#include <iostream> // Include the input-output stream library to use std::cout  
+#include "cmdp.h"
 
-    cmdp.parse(argc, argv);
+int main(int argc, char const* argv[]) // Main function, receives command line arguments  
+{  
+    // Create a command parser object cmdp  
+    ntl::cmd::cmdp cmdp;   
+
+    // Add a command "-test" to cmdp and bind a lambda function as its handler  
+    cmdp.add("-test")  
+        .bind([]()
+        {   
+            // If the command "-test" is called, output "cmdp test"  
+            std::cout << "cmdp test" << std::endl;   
+        });  
+
+    // Add another command "-echo" and bind a lambda function  
+    cmdp.add("-echo")  
+        .bind([&cmdp]()   
+        {  
+            // If the command "-echo" is called, use cmdp.next_str() to get the next string and output it  
+            std::cout << cmdp.next_str() << std::endl;  
+        });  
+
+    // Initialize the command parser, passing the command line arguments  
+    cmdp.init(argc, argv);  
+    
+    // Parse the command line arguments and invoke the corresponding handlers  
+    cmdp.parse();   
 }
-```
-
-## cmdp.flag
-This function bind a boolean variant to an option.
-When the option is given, the variant would set to the given value.
-
-```cpp
-    bool is_flag_given;
-    cmdp.flag("-fgiven", &is_flag_given, true);
-    cmdp.flag("-ngiven", &is_flag_given, false);
 ```
