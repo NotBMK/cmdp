@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <functional>
 
 // namespace for notbmk`s util
 namespace ntl
@@ -14,6 +15,7 @@ namespace cmd
 struct cmdp_error : std::exception
 {
     cmdp_error(const std::string& msg) : msg(msg) { }
+    cmdp_error(std::string&& msg) : msg(std::move(msg)) { }
     ~cmdp_error() { }
     std::string msg;
     const char* what() const noexcept { return msg.c_str(); };
@@ -23,7 +25,8 @@ struct cmdp_error : std::exception
 template <typename _Char = char>
 struct char_hash_ignore_case
 {
-    constexpr int operator()(_Char ch) const
+    constexpr int
+        operator()(_Char ch) const
     {
         if (32 <= ch && ch < 127)
         {
@@ -57,74 +60,38 @@ template <typename _Char, typename _Char_to_Index, size_t _Index_Count = get_max
 class basic_cmd_parser
 {
 protected:
-    // function pointer to char hash
+
     using char_type = _Char;
     using ctoi_t    = _Char_to_Index;
-    using f_noarg_t = void(*)();
-    using lpctstr_t = const _Char *;
-    using string_t  = std::basic_string<_Char>;
+    using f_noarg_t = std::function<void()>;
+    using lpctstr_t = const char_type *;
+    using string_t  = std::basic_string<char_type>;
+    using sstream_t = std::basic_stringstream<char_type>;
 
-    struct handler_t
+    struct basic_target
     {
-        void operator()(lpctstr_t str) { handle(str); }
-        virtual void handle(lpctstr_t str) {  }
+        virtual bool invoke() { return false; }
+        virtual bool handle(lpctstr_t str) { return false; }
     };
 
-    template <typename _Read>
-    struct string_reader : public handler_t
+    class callback : public basic_target
     {
-        string_reader(_Read reader) : reader(reader) { }
-        void handle(lpctstr_t str)
-        {
-            reader(str);
-        }
-        _Read reader;
-    };
+    public:
 
-    struct callback_t
-    {
-        void operator()() { call(); }
-        virtual void call() { };
-    };
-
-    // function without arguments
-    struct function_wa : callback_t
-    {
-        function_wa(f_noarg_t callback) : callback(callback) { }
-
-        void call() override { callback(); }
+        callback(f_noarg_t f) :f(f) { }
+        bool invoke() { f(); return true; }
 
     private:
 
-        f_noarg_t callback;
+        f_noarg_t f;
     };
 
-    struct set_flag_to : callback_t
+    struct char_node
     {
-        set_flag_to(bool* flag, bool val = true) : flag(flag), val(val) { }
-
-        void call() override { if (flag) *flag = val; }
-
-    private:
-
-        bool* flag;
-        bool val;
-    };
-
-    struct Node
-    {
-        enum Type
+        explicit char_node()
         {
-            ILLEGAL = -1,
-            CALLBACK,
-            HANDLER,
-        };
-
-        explicit Node()
-        {
-            this->type = ILLEGAL;
-            this->call = nullptr;
             this->what = nullptr;
+            this->target = nullptr;
 
             for (size_t i = 0; i < _Index_Count; ++i)
             {
@@ -132,185 +99,277 @@ protected:
             }
         }
 
-        virtual ~Node()
+        virtual ~char_node()
         {
             for (size_t i = 0; i < _Index_Count; ++i)
             {
-                if (this->next[i])
-                {
-                    delete this->next[i];
-                }
+                if (this->next[i]) delete this->next[i];
             }
+            if (what) delete what;
         }
 
-        bool on_match(lpctstr_t opt, lpctstr_t res)
+        /**
+         * Bind a string to the current node.
+         * ---- Consider using std::optional 
+         */
+        void bind(lpctstr_t str)
         {
-            switch (this->type)
+            if (str)
             {
-                
-            case Node::CALLBACK:
-                if (call && !*res)
-                {
-                    call->call();
-                    return true;
-                }
-                break;
-
-            case Node::HANDLER:
-                if (handle && *res)
-                {
-                    handle->handle(res);
-                    return true;
-                }
-                break;
+                if (!what) what = new string_t;
+                *what = str;
             }
-            return false;
+            else
+            {
+                if (what) { delete what; what = nullptr; }
+            }
         }
 
-        Type                type;
-        Node*               next[_Index_Count];
-        union
-        {
-            callback_t*     call;
-            handler_t*      handle;
-        };
-        lpctstr_t           what;
+        char_node*      next[_Index_Count];
+        string_t*       what;
+        basic_target*   target;
     };
 
 private:
 
-    struct parse_impl
+    struct cmdp_impl
     {
     public:
 
-        parse_impl(basic_cmd_parser* parent, Node* last)
+        cmdp_impl(basic_cmd_parser* parent, char_node* last)
             : parent(parent)
-            , last(last) { }
+            , vector({last})
+            , target(nullptr) { }
 
-        parse_impl& alias(lpctstr_t option)
+        ~cmdp_impl()
         {
-            Node* node = parent->_M_insert(option);
-            node->type = last->type;
-            node->call = last->call;
+            if (target)
+            {
+                parent->_M_add_target(target);
+                for (char_node* node : vector)
+                {
+                    node->target = target;
+                }
+            }
+        }
+
+        /**
+         * Alias the current option.
+         */
+        cmdp_impl& alias(lpctstr_t option)
+        {
+            char_node* node = parent->_M_insert(parent->_M_root, option);
+            vector.push_back(node);
+            return *this;
+        }
+
+        /**
+         * Bind a callback function to the current option.
+         */
+        cmdp_impl& bind(f_noarg_t call)
+        {
+            if (!target) target = new callback(call);
+            else throw cmdp_error("multiple bind.");
             return *this;
         }
 
     private:
 
-        basic_cmd_parser*   parent;
-        Node*               last;
+        basic_cmd_parser*           parent;
+        std::vector<char_node*>     vector;
+        basic_target*               target;
     };
 
 public:
 
-    // I`m lazy
-    basic_cmd_parser(const basic_cmd_parser&) = delete;
-    basic_cmd_parser(basic_cmd_parser&&) = delete;
-    basic_cmd_parser& operator=(const basic_cmd_parser&) = delete;
-    basic_cmd_parser& operator=(basic_cmd_parser&&) = delete;
+    basic_cmd_parser(const basic_cmd_parser&)               = delete;
+    basic_cmd_parser(basic_cmd_parser&&)                    = delete;
+    basic_cmd_parser& operator=(const basic_cmd_parser&)    = delete;
+    basic_cmd_parser& operator=(basic_cmd_parser&&)         = delete;
 
     basic_cmd_parser()
     {
-        _M_root = _M_addNode(new Node{});
-        _M_default_handler = nullptr;
+        _M_root = _M_add_node(new char_node{});
+        _M_argi = 0;
+        _M_argv = nullptr;
     }
 
     ~basic_cmd_parser()
     {
-        _M_deallocNode(&_M_root);
-        for (callback_t* cal : _M_maned_callback)
+        _M_root->what = nullptr;
+        _M_dealloc_node(&_M_root);
+        for (basic_target* target : _M_targets)
         {
-            delete cal;
+            delete target;
         }
-        for (handler_t* han : _M_maned_handler)
-        {
-            delete han;
-        }
-    }
-
-    int operator[](_Char ch)
-    {
-        return _M_ctoi(ch);
-    }
-
-    lpctstr_t recent()
-    {
-        return _M_root->what;
     }
 
     /**
-     * @param flag would set to val
-     */ 
-    parse_impl flag(lpctstr_t option, bool* flag, bool val = true)
-    {
-        return bind(option, new set_flag_to(flag, val), true);
-    }
+     * @return next string
+     */
+    lpctstr_t next_str() { lpctstr_t ret = _M_get_next_str(); _M_next(); return ret; }
 
-    // @param call will be called when matched
-    parse_impl add(lpctstr_t option, f_noarg_t call)
-    {
-        return bind(option, new function_wa(call), true);
-    }
+    /**
+     * @return next integer (long)
+     */
+    long next_int() { return _M_next_value<long>(); }
 
-    // handle string after the option
-    // for example: "-version=1.20", the handler will get "1.20"
-    template <typename _Handler>
-    parse_impl gets(lpctstr_t option, _Handler handler)
-    {
-        return bind(option, new string_reader(handler), true);
-    }
+    /**
+     * @return next double
+     */
+    double next_double() { return _M_next_value<double>(); }
 
-    template <typename _Handler>
-    void set_default(_Handler handler)
+    /**
+     * @return The last matched option.
+     */
+    lpctstr_t last() { return _M_root->what ? _M_root->what->c_str() : nullptr; }
+
+    /**
+     * Add the option
+     */
+    cmdp_impl add(lpctstr_t option)
     {
-        if (_M_default_handler)
-        {
-            delete _M_default_handler;
-        }
-        _M_default_handler = new string_reader(handler);
+        char_node* node = _M_insert(_M_root, option);
+        return cmdp_impl(this, node);
     }
 
     /**
-     * @param man if set true, 'res' would be released inside the class
+     * 
      */
-    parse_impl bind(lpctstr_t option, callback_t* cal, bool man = false)
+    void init(int argc, lpctstr_t argv[])
     {
-        Node* node = _M_insert(option);
-        node->type = Node::CALLBACK;
-        if (man) node->call = _M_add_callback(cal);
-        else node->call = cal;
-        return parse_impl(this, node);
+        _M_argi = 1;
+        _M_argc = argc;
+        _M_argv = argv;
     }
 
     /**
-     * @param man if set true, 'res' would be released inside the class
+     * parse options got from init('argc', 'argv')
      */
-    parse_impl bind(lpctstr_t option, handler_t* han, bool man = false)
+    void parse()
     {
-        Node* node = _M_insert(option);
-        node->type = Node::HANDLER;
-        if (man) node->handle = _M_add_handler(han);
-        else node->handle = han;
-        return parse_impl(this, node);
+        while (_M_parsing())
+        {
+            try
+            {
+                _M_parse_once(_M_get_now_str());              
+            }
+            catch(const cmdp_error& e)
+            {
+                std::cerr << e.what() << '\n';
+            }
+            _M_next();
+        }
     }
 
-    /** parse once
-     */
-    void parse(lpctstr_t str)
+protected:
+
+    bool _M_parsing() { return _M_argv ? (_M_argi < _M_argc) : false; }
+
+    bool _M_has_next() { return _M_argv ? (1 + _M_argi < _M_argc) : false; }
+    
+    void _M_next() { ++_M_argi; }
+
+    template <typename _Type>
+    _Type _M_next_value()
     {
-        Node* node;
-        lpctstr_t res = _M_walk(str, &node);
-        if (node == _M_root)
-        {
-            _M_default_handler->handle(str);
-            return;
-        }
-        if (!node->on_match(str, res))
+        sstream_t ss(_M_get_next_str()); _M_next();
+        _Type ret;
+        if(!(ss >> ret))
         {
             char buf[256];
-            if (recent())
+            if (last())
+                sprintf(buf, "%s got a wrong value", last());
+            else
+                sprintf(buf, "processing \"%s\" failed", _M_get_now_str());
+            throw cmdp_error(buf);
+        }
+        return ret;
+    }
+
+    lpctstr_t _M_get_now_str() { return _M_parsing() ? _M_argv[_M_argi] : nullptr; }
+
+    lpctstr_t _M_get_next_str()
+    {
+        if (_M_has_next())
+        {
+            return _M_argv[1 + _M_argi];
+        }
+        else throw cmdp_error("no more argument.");
+    }
+
+    /**
+     * Traverse along the character tree.
+     * @param ret return the string not in the character tree
+     */
+    char_node* _M_walk(char_node* start, lpctstr_t str, lpctstr_t* ret)
+    {
+        _M_root->what = nullptr;
+        char_node* node = start;
+        while(*str && node->next[_M_ctoi(*str)])
+        {
+            node = node->next[_M_ctoi(*str)];
+            if (node->what) _M_root->what = node->what;
+            ++str;
+        }
+        if (ret) *ret = str;
+        return node;
+    }
+
+    char_node* _M_insert(char_node* root, lpctstr_t str)
+    {
+        lpctstr_t res;
+        char_node* node = _M_walk(root, str, &res);
+        node = _M_insert_after(node, res);
+        if (node->what) { throw cmdp_error("multiple definition"); }
+        node->bind(str);
+        return node;
+    }
+
+    /**
+     * TODO: char_node* _M_insert_after(char_node*, char_node*)
+     */
+    char_node* _M_insert_after(char_node* node, lpctstr_t str)
+    {
+        while(*str)
+        {
+            char_node* next = _M_add_node(new char_node{});
+            node->next[_M_ctoi(*str)] = next;
+            node = next;
+            ++str;
+        }
+        return node;
+    }
+
+    bool _M_is_option(lpctstr_t str)
+    {
+        return *str == (char_type)'-';
+    }
+
+    /**
+     * Verify if the str is one of the given options.
+     */
+    bool _M_verify_option(lpctstr_t str)
+    {
+        char_node* node = _M_walk(_M_root, str, 0);
+        return node->what;
+    }
+
+    /** 
+     * parse once
+     */
+    void _M_parse_once(lpctstr_t str)
+    {
+        if (!str) throw cmdp_error("got null str");
+        lpctstr_t res;
+        char_node* node  = _M_walk(_M_root, str, &res);
+        bool is_good = (!*res && node->what && node->target && (node->target->invoke() || node->target->handle(res)));
+        if (!is_good)
+        {
+            char buf[256];
+            if (last())
             {
-                sprintf(buf, "invalid option: \"%s\", did you mean \"%s\" ?", str, recent());
+                sprintf(buf, "invalid option: \"%s\", did you mean \"%s\" ?", str, last());
                 throw cmdp_error(buf);
             }
             else
@@ -322,91 +381,23 @@ public:
     }
 
     /**
-     * parse option from main('argc', 'argv')
+     * use for debug
      */
-    void parse(int argc, lpctstr_t argv[])
-    {
-        for (int argi = 1; argi < argc; ++argi)
-        {
-            try
-            {
-                parse(argv[argi]);
-            }
-            catch(const cmdp_error& e)
-            {
-                std::cerr << e.what() << '\n';
-            }
-        }
-    }
+    char_node* _M_add_node(char_node* node) { return node; }
+
+    basic_target* _M_add_target(basic_target* t) { _M_targets.push_back(t); return t; }
+
+    void _M_dealloc_node(char_node** node) { delete *node; *node = nullptr; }
 
 protected:
 
-    lpctstr_t _M_walk(lpctstr_t str, Node** ret)
-    {
-        _M_root->what = nullptr;
-        Node* node = _M_root;
-        while(*str && node->next[_M_ctoi(*str)])
-        {
-            if (node->what) _M_root->what = node->what;
-            node = node->next[_M_ctoi(*str)];
-            ++str;
-        }
-        if (ret) *ret = node;
-        return str;
-    }
+    int                         _M_argi;
+    int                         _M_argc;
+    lpctstr_t*                  _M_argv;
 
-    Node* _M_insert(lpctstr_t str)
-    {
-        Node* node;
-        lpctstr_t res = _M_walk(str, &node);
-        node = _M_insert_after(node, res);
-        if (node->what) { throw cmdp_error("multiple definition"); }
-        node->what = str;
-        return node;
-    }
-
-    Node* _M_insert_after(Node* node, lpctstr_t str)
-    {
-        while(*str)
-        {
-            Node* next = _M_addNode(new Node{});
-            node->next[_M_ctoi(*str)] = next;
-            node = next;
-            ++str;
-        }
-        return node;
-    }
-
-    Node* _M_addNode(Node* node)
-    {
-        return node;
-    }
-
-    void _M_deallocNode(Node** node)
-    {
-        delete *node;
-        *node = nullptr;
-    }
-
-    callback_t* _M_add_callback(callback_t* ptr)
-    {
-        _M_maned_callback.push_back(ptr);
-        return ptr;
-    }
-
-    handler_t* _M_add_handler(handler_t* ptr)
-    {
-        _M_maned_handler.push_back(ptr);
-        return ptr;
-    }
-
-protected:
-
-    Node*                       _M_root;
-    handler_t*                  _M_default_handler;
+    char_node*                  _M_root;
     ctoi_t                      _M_ctoi;
-    std::vector<callback_t*>    _M_maned_callback;
-    std::vector<handler_t*>     _M_maned_handler;
+    std::vector<basic_target*>  _M_targets;
 };
 
 // command option parser

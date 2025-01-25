@@ -33,5 +33,4 @@ When the option is given, the variant would set to the given value.
     bool is_flag_given;
     cmdp.flag("-fgiven", &is_flag_given, true);
     cmdp.flag("-ngiven", &is_flag_given, false);
-
 ```
