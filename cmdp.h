@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <optional>
 #include <functional>
 
 // namespace for notbmk`s util
@@ -57,24 +58,41 @@ constexpr size_t get_max_index()
 }
 
 template <typename _Char, typename _Char_to_Index, size_t _Index_Count = get_max_index<_Char, _Char_to_Index>() + 1>
-class basic_cmd_parser
+class basic_cmdp
 {
 protected:
 
-    using char_type = _Char;
-    using ctoi_t    = _Char_to_Index;
-    using f_noarg_t = std::function<void()>;
-    using lpctstr_t = const char_type *;
-    using string_t  = std::basic_string<char_type>;
-    using sstream_t = std::basic_stringstream<char_type>;
+    using char_type     = _Char;
+    using ctoi_t        = _Char_to_Index;
+    using f_noarg_t     = std::function<void()>;
+    using lpctstr_t     = const char_type *;
+    using string_t      = std::basic_string<char_type>;
+    using sstream_t     = std::basic_stringstream<char_type>;
+
+    struct arg_iter
+    {
+        void init(int c, lpctstr_t* v) { argi = 0; argc = c; argv = v; }
+        bool good(int offset = 0) { int i = offset + argi; return 0 <= i && i < argc; }
+        operator bool() { return good(0); }
+
+        lpctstr_t now() { return good(0) ? argv[argi] : nullptr; }
+        lpctstr_t next() { return good(1) ? argv[1 +  argi] : nullptr; }
+        void step() { ++argi; }
+        void reset() { argi = 0; }
+
+        int         argi = 0;
+        int         argc;
+        lpctstr_t*  argv = nullptr;
+    };
 
     struct basic_target
     {
+        virtual ~basic_target() { }
         virtual bool invoke() { return false; }
         virtual bool handle(lpctstr_t str) { return false; }
     };
 
-    class callback : public basic_target
+    class callback final : public basic_target
     {
     public:
 
@@ -86,11 +104,23 @@ protected:
         f_noarg_t f;
     };
 
+    template <typename T>
+    class setter final : public basic_target
+    {
+    public:
+        setter(T* target, const T& value) : target(target), value(value) { }
+        bool invoke() override { *target = value; return true; }
+
+    private:
+
+        T*          target;
+        const T&    value;
+    };
+
     struct char_node
     {
         explicit char_node()
         {
-            this->what = nullptr;
             this->target = nullptr;
 
             for (size_t i = 0; i < _Index_Count; ++i)
@@ -105,29 +135,17 @@ protected:
             {
                 if (this->next[i]) delete this->next[i];
             }
-            if (what) delete what;
         }
 
         /**
          * Bind a string to the current node.
          * ---- Consider using std::optional 
          */
-        void bind(lpctstr_t str)
-        {
-            if (str)
-            {
-                if (!what) what = new string_t;
-                *what = str;
-            }
-            else
-            {
-                if (what) { delete what; what = nullptr; }
-            }
-        }
+        void bind(lpctstr_t str) { if (str) what = str; else what.reset(); }
 
-        char_node*      next[_Index_Count];
-        string_t*       what;
-        basic_target*   target;
+        char_node*                      next[_Index_Count];
+        std::optional<string_t>         what;
+        basic_target*                   target;
     };
 
 private:
@@ -136,7 +154,7 @@ private:
     {
     public:
 
-        cmdp_impl(basic_cmd_parser* parent, char_node* last)
+        cmdp_impl(basic_cmdp* parent, char_node* last)
             : parent(parent)
             , vector({last})
             , target(nullptr) { }
@@ -173,30 +191,39 @@ private:
             return *this;
         }
 
+        /**
+         * 
+         */
+        template <typename T>
+        cmdp_impl& bind(T* t, const T& value)
+        {
+            if (!target) target = new setter<T>(t, value);
+            else throw cmdp_error("multiple bind.");
+            return *this;
+        }
+
     private:
 
-        basic_cmd_parser*           parent;
+        basic_cmdp*                 parent;
         std::vector<char_node*>     vector;
         basic_target*               target;
     };
 
 public:
 
-    basic_cmd_parser(const basic_cmd_parser&)               = delete;
-    basic_cmd_parser(basic_cmd_parser&&)                    = delete;
-    basic_cmd_parser& operator=(const basic_cmd_parser&)    = delete;
-    basic_cmd_parser& operator=(basic_cmd_parser&&)         = delete;
+    basic_cmdp(const basic_cmdp&)               = delete;
+    basic_cmdp(basic_cmdp&&)                    = delete;
+    basic_cmdp& operator=(const basic_cmdp&)    = delete;
+    basic_cmdp& operator=(basic_cmdp&&)         = delete;
 
-    basic_cmd_parser()
+    basic_cmdp()
     {
         _M_root = _M_add_node(new char_node{});
-        _M_argi = 0;
-        _M_argv = nullptr;
     }
 
-    ~basic_cmd_parser()
+    ~basic_cmdp()
     {
-        _M_root->what = nullptr;
+        _M_root->what.reset();
         _M_dealloc_node(&_M_root);
         for (basic_target* target : _M_targets)
         {
@@ -207,17 +234,7 @@ public:
     /**
      * @return next string
      */
-    lpctstr_t next_str() { lpctstr_t ret = _M_get_next_str(); _M_next(); return ret; }
-
-    /**
-     * @return next integer (long)
-     */
-    long next_int() { return _M_next_value<long>(); }
-
-    /**
-     * @return next double
-     */
-    double next_double() { return _M_next_value<double>(); }
+    lpctstr_t next_str() { lpctstr_t ret = _M_args.next(); _M_args.step(); return ret; }
 
     /**
      * @return The last matched option.
@@ -238,9 +255,7 @@ public:
      */
     void init(int argc, lpctstr_t argv[])
     {
-        _M_argi = 1;
-        _M_argc = argc;
-        _M_argv = argv;
+        _M_args.init(argc, argv);
     }
 
     /**
@@ -248,55 +263,26 @@ public:
      */
     void parse()
     {
-        while (_M_parsing())
+        while (_M_args.good(0))
         {
             try
             {
-                _M_parse_once(_M_get_now_str());              
+                _M_parse_once(_M_args.now());              
             }
             catch(const cmdp_error& e)
             {
                 std::cerr << e.what() << '\n';
             }
-            _M_next();
+            _M_args.step();
         }
     }
 
 protected:
 
-    bool _M_parsing() { return _M_argv ? (_M_argi < _M_argc) : false; }
-
-    bool _M_has_next() { return _M_argv ? (1 + _M_argi < _M_argc) : false; }
-    
-    void _M_next() { ++_M_argi; }
-
-    template <typename _Type>
-    _Type _M_next_value()
-    {
-        sstream_t ss(_M_get_next_str()); _M_next();
-        _Type ret;
-        if(!(ss >> ret))
-        {
-            char buf[256];
-            if (last())
-                sprintf(buf, "%s got a wrong value", last());
-            else
-                sprintf(buf, "processing \"%s\" failed", _M_get_now_str());
-            throw cmdp_error(buf);
-        }
-        return ret;
-    }
-
-    lpctstr_t _M_get_now_str() { return _M_parsing() ? _M_argv[_M_argi] : nullptr; }
-
-    lpctstr_t _M_get_next_str()
-    {
-        if (_M_has_next())
-        {
-            return _M_argv[1 + _M_argi];
-        }
-        else throw cmdp_error("no more argument.");
-    }
+    /**
+     * do nothing
+     */
+    static basic_target* nulltarget() { static basic_target null; return &null; }
 
     /**
      * Traverse along the character tree.
@@ -304,7 +290,7 @@ protected:
      */
     char_node* _M_walk(char_node* start, lpctstr_t str, lpctstr_t* ret)
     {
-        _M_root->what = nullptr;
+        _M_root->what.reset();
         char_node* node = start;
         while(*str && node->next[_M_ctoi(*str)])
         {
@@ -316,6 +302,9 @@ protected:
         return node;
     }
 
+    /**
+     * 
+     */
     char_node* _M_insert(char_node* root, lpctstr_t str)
     {
         lpctstr_t res;
@@ -391,9 +380,7 @@ protected:
 
 protected:
 
-    int                         _M_argi;
-    int                         _M_argc;
-    lpctstr_t*                  _M_argv;
+    arg_iter                    _M_args;
 
     char_node*                  _M_root;
     ctoi_t                      _M_ctoi;
@@ -401,7 +388,7 @@ protected:
 };
 
 // command option parser
-typedef basic_cmd_parser<char, char_hash_ignore_case<char>> cmdp;
+typedef basic_cmdp<char, char_hash_ignore_case<char>> cmdp;
 
 } // cmd
 

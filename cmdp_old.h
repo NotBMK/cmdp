@@ -54,7 +54,7 @@ constexpr size_t get_max_index()
 }
 
 template <typename _Char, typename _Char_to_Index, size_t _Index_Count = get_max_index<_Char, _Char_to_Index>() + 1>
-class basic_cmd_parser
+class basic_cmdp
 {
 protected:
     // function pointer to char hash
@@ -183,7 +183,7 @@ private:
     {
     public:
 
-        cmdp_impl(basic_cmd_parser* parent, Node* last)
+        cmdp_impl(basic_cmdp* parent, Node* last)
             : parent(parent)
             , last(last) { }
 
@@ -197,25 +197,25 @@ private:
 
     private:
 
-        basic_cmd_parser*   parent;
+        basic_cmdp*   parent;
         Node*               last;
     };
 
 public:
 
     // I`m lazy
-    basic_cmd_parser(const basic_cmd_parser&) = delete;
-    basic_cmd_parser(basic_cmd_parser&&) = delete;
-    basic_cmd_parser& operator=(const basic_cmd_parser&) = delete;
-    basic_cmd_parser& operator=(basic_cmd_parser&&) = delete;
+    basic_cmdp(const basic_cmdp&) = delete;
+    basic_cmdp(basic_cmdp&&) = delete;
+    basic_cmdp& operator=(const basic_cmdp&) = delete;
+    basic_cmdp& operator=(basic_cmdp&&) = delete;
 
-    basic_cmd_parser()
+    basic_cmdp()
     {
         _M_root = _M_addNode(new Node{});
         _M_default_handler = nullptr;
     }
 
-    ~basic_cmd_parser()
+    ~basic_cmdp()
     {
         _M_deallocNode(&_M_root);
         for (basic_callback* cal : _M_maned_callback)
@@ -410,7 +410,7 @@ protected:
 };
 
 // command option parser
-typedef basic_cmd_parser<char, char_hash_ignore_case<char>> cmdp;
+typedef basic_cmdp<char, char_hash_ignore_case<char>> cmdp;
 
 } // cmd
 
