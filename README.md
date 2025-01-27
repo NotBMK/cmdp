@@ -6,10 +6,10 @@ An easy command option parser
 ## cmdp.add
 This function bind a callback function without argument and return to an option.
 ```cpp
-#include <iostream> // Include the input-output stream library to use std::cout  
+#include <iostream> 
 #include "cmdp.h"
 
-int main(int argc, char const* argv[]) // Main function, receives command line arguments  
+int main(int argc, char const* argv[])
 {  
     // Create a command parser object cmdp  
     ntl::cmd::cmdp cmdp;   
@@ -22,12 +22,12 @@ int main(int argc, char const* argv[]) // Main function, receives command line a
             std::cout << "cmdp test" << std::endl;   
         });  
 
-    // Add another command "-echo" and bind a lambda function  
-    cmdp.add("-echo")  
+    // Add another command "echo" and bind a lambda function  
+    cmdp.add("echo")  
         .bind([&cmdp]()   
         {  
-            // If the command "-echo" is called, use cmdp.next_str() to get the next string and output it  
-            std::cout << cmdp.next_str() << std::endl;  
+            // If the command "echo" is called, use cmdp.next_str() to get the next string and output it  
+            std::cout << cmdp.next() << std::endl;  
         });  
 
     // Initialize the command parser, passing the command line arguments  
