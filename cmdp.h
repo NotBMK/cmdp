@@ -219,6 +219,7 @@ public:
     basic_cmdp()
     {
         _M_root = _M_add_node(new char_node{});
+        _M_ignore_first = false;
     }
 
     ~basic_cmdp()
@@ -231,10 +232,17 @@ public:
         }
     }
 
+    void ignore_first(bool value) { _M_ignore_first = value; }
+
     /**
      * @return next string
      */
-    lpctstr_t next_str() { lpctstr_t ret = _M_args.next(); _M_args.step(); return ret; }
+    bool has_next() { return _M_args.good(1); }
+
+    /**
+     * @return next string
+     */
+    lpctstr_t next() { lpctstr_t ret = _M_args.next(); if (ret) _M_args.step(); return ret; }
 
     /**
      * @return The last matched option.
@@ -263,6 +271,7 @@ public:
      */
     void parse()
     {
+        _M_args.argi = _M_ignore_first;
         while (_M_args.good(0))
         {
             try
@@ -381,7 +390,7 @@ protected:
 protected:
 
     arg_iter                    _M_args;
-
+    bool                        _M_ignore_first;
     char_node*                  _M_root;
     ctoi_t                      _M_ctoi;
     std::vector<basic_target*>  _M_targets;
