@@ -13,13 +13,13 @@ namespace ntl
 namespace cmd
 {
 
-struct cmdp_error : std::exception
+struct cmdp_error : public std::exception
 {
     cmdp_error(const std::string& msg) : msg(msg) { }
     cmdp_error(std::string&& msg) : msg(std::move(msg)) { }
     ~cmdp_error() { }
     std::string msg;
-    const char* what() const noexcept { return msg.c_str(); };
+    const char* what() const noexcept override{ return msg.c_str(); };
 };
 
 // ignore case, cast ASSCII[32, 126] to index[0, 68]
@@ -72,11 +72,12 @@ protected:
     struct arg_iter
     {
         void init(int c, lpctstr_t* v) { argi = 0; argc = c; argv = v; }
-        bool good(int offset = 0) { int i = offset + argi; return 0 <= i && i < argc; }
-        operator bool() { return good(0); }
+        template<size_t offset>
+        bool good() { int i = offset + argi; return 0 <= i && i < argc; }
+        operator bool() { return good<0>(); }
 
-        lpctstr_t now() { return good(0) ? argv[argi] : nullptr; }
-        lpctstr_t next() { return good(1) ? argv[1 +  argi] : nullptr; }
+        lpctstr_t now() { return good<0>() ? argv[argi] : nullptr; }
+        lpctstr_t next() { return good<1>() ? argv[1 +  argi] : nullptr; }
         void step() { ++argi; }
         void reset() { argi = 0; }
 
@@ -272,7 +273,7 @@ public:
     void parse()
     {
         _M_args.argi = _M_ignore_first;
-        while (_M_args.good(0))
+        while (_M_args.now())
         {
             try
             {
